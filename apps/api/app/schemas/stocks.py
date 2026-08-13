@@ -53,3 +53,21 @@ class TechnicalResponse(BaseModel):
     total_score: int
     delayed: bool
     message: str | None = None
+
+
+class PredictionResponse(BaseModel):
+    symbol: str
+    timestamp: datetime | None
+    horizon: str
+    direction: str
+    probability_up_raw: float
+    probability_up_calibrated: float
+    confidence: float
+    abstained: bool
+    interval_low: float
+    interval_high: float
+    regime: str
+    freshness_seconds: float | None
+    source_reliability: float
+    explanation: dict[str, float]
+    message: str | None = None

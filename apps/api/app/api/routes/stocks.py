@@ -3,12 +3,14 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.core.rate_limit import enforce_rate_limit
-from app.schemas.stocks import HistoricalResponse, QuoteResponse, TechnicalResponse
+from app.schemas.stocks import HistoricalResponse, PredictionResponse, QuoteResponse, TechnicalResponse
 from app.services.cache import cache_client
 from app.services.market_data.factory import get_provider
+from app.services.ml_pipeline import CandlePoint, build_default_ensemble, build_feature_rows, clean_candles
 from app.services.technical import compute_basic_technicals, score_technical_signals
 
 router = APIRouter()
+ensemble_predictor = build_default_ensemble()
 
 
 @router.get("/")
@@ -142,4 +144,80 @@ async def stock_technical(
         total_score=total_score,
         delayed=False,
         message=None,
+    )
+
+
+@router.get("/{symbol}/prediction", response_model=PredictionResponse)
+async def stock_prediction(
+    request: Request,
+    symbol: str,
+    exchange: str = "NSE",
+    interval: str = Query(default="1day"),
+    outputsize: int = Query(default=240, ge=60, le=5000),
+    horizon: str = Query(default="1day"),
+    _rate_limit: None = Depends(enforce_rate_limit),
+) -> PredictionResponse:
+    provider = get_provider()
+    candles, delayed, message = await provider.get_history(
+        symbol.upper(),
+        exchange=exchange,
+        interval=interval,
+        outputsize=outputsize,
+    )
+
+    if delayed and not candles:
+        return PredictionResponse(
+            symbol=symbol.upper(),
+            timestamp=datetime.now(timezone.utc),
+            horizon=horizon,
+            direction="ABSTAIN",
+            probability_up_raw=0.5,
+            probability_up_calibrated=0.5,
+            confidence=0.5,
+            abstained=True,
+            interval_low=0.0,
+            interval_high=0.0,
+            regime="unknown",
+            freshness_seconds=None,
+            source_reliability=0.0,
+            explanation={},
+            message=message,
+        )
+
+    if not candles:
+        raise HTTPException(status_code=404, detail="No historical candles found for requested symbol/timeframe")
+
+    converted = [
+        CandlePoint(
+            timestamp=c.timestamp,
+            open=float(c.open),
+            high=float(c.high),
+            low=float(c.low),
+            close=float(c.close),
+            volume=float(c.volume) if c.volume is not None else None,
+        )
+        for c in candles
+    ]
+    cleaned, quality = clean_candles(converted, source_reliability_hint=0.92)
+    features = build_feature_rows(cleaned, symbol=symbol.upper())
+    if not features:
+        raise HTTPException(status_code=422, detail="Not enough cleaned candles to generate features")
+
+    decision = ensemble_predictor.predict(features[-1])
+    return PredictionResponse(
+        symbol=symbol.upper(),
+        timestamp=features[-1].timestamp,
+        horizon=horizon,
+        direction=decision.direction,
+        probability_up_raw=decision.probability_up_raw,
+        probability_up_calibrated=decision.probability_up_calibrated,
+        confidence=decision.confidence,
+        abstained=decision.abstained,
+        interval_low=decision.interval_low,
+        interval_high=decision.interval_high,
+        regime=decision.regime,
+        freshness_seconds=quality.freshness_seconds,
+        source_reliability=quality.source_reliability,
+        explanation=decision.explanation,
+        message=message,
     )
