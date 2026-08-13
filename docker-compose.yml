@@ -1,0 +1,58 @@
+services:
+  database:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-stockmind}
+      POSTGRES_USER: ${POSTGRES_USER:-stockmind}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build:
+      context: /home/runner/work/Stock-AI/Stock-AI/apps/api
+    env_file:
+      - /home/runner/work/Stock-AI/Stock-AI/.env.example
+    depends_on:
+      - database
+      - redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - /home/runner/work/Stock-AI/Stock-AI/apps/api:/app
+
+  worker:
+    build:
+      context: /home/runner/work/Stock-AI/Stock-AI/apps/api
+    command: celery -A app.worker.celery_app worker -l info
+    env_file:
+      - /home/runner/work/Stock-AI/Stock-AI/.env.example
+    depends_on:
+      - api
+      - redis
+      - database
+    volumes:
+      - /home/runner/work/Stock-AI/Stock-AI/apps/api:/app
+
+  web:
+    build:
+      context: /home/runner/work/Stock-AI/Stock-AI/apps/web
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    volumes:
+      - /home/runner/work/Stock-AI/Stock-AI/apps/web:/app
+      - /app/node_modules
+
+volumes:
+  pg_data:
