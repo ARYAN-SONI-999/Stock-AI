@@ -9,5 +9,6 @@ Base path: `/api/v1`
 - `GET /stocks/{symbol}/quote`
 - `GET /stocks/{symbol}/history`
 - `GET /stocks/{symbol}/technical`
+- `GET /stocks/{symbol}/prediction`
 
 All market data endpoints explicitly return delayed/unavailable messages when provider data is not available.
